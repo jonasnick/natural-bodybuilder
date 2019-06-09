@@ -3,6 +3,7 @@ use std::io::BufReader;
 use std::io::prelude::*;
 use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
+use rand::prelude::*;
 
 #[derive(Serialize, Deserialize, Debug)]
 struct Ingredient {
@@ -135,42 +136,40 @@ fn optimize(target: &NormalizedTarget, ingredients: &Ingredients, steps: usize) 
     proposal
 }
 
-//fn randomize(target: &NormalizedTarget, ingredients: &Ingredients, steps: usize) -> Proposal {
-    //let maxn = 100;
+fn randomize(target: &NormalizedTarget, ingredients: &Ingredients, steps: usize) -> Proposal {
+    let maxn = 100;
 
-    //let mut proposal = Proposal(HashMap::new());
-    //for (name, _) in &ingredients.0 {
-        //proposal.0.insert(name.to_string(), 0);
-    //}
-    //for _ in 0..steps {
-        //let mut min_cost = None;
-        //let mut best_ingredient = None;
-        //// optimize greedily
-        //for (name, _) in &ingredients.0 {
-            //*proposal.0.get_mut(name).unwrap() += 1;
-            //let cost = target.evaluate(&proposal, ingredients);
-            //println!("\tAdd {}, cost {}", name, cost);
-            //min_cost = match min_cost {
-                //None => {
-                    //best_ingredient = Some(name);
-                    //Some(cost)
-                //}
-                //Some(min_cost) => {
-                    //if cost < min_cost {
-                        //best_ingredient = Some(name);
-                        //Some(cost)
-                    //} else {
-                        //Some(min_cost)
-                    //}
-                //}
-            //};
-            //*proposal.0.get_mut(name).unwrap() -= 1;
-        //}
-        //*proposal.0.get_mut(best_ingredient.unwrap()).unwrap() += 1;
-        //println!("Add {}, cost {}", best_ingredient.unwrap(), target.evaluate(&proposal, ingredients));
-    //}
-    //proposal
-//}
+    for _ in 0..steps {
+        let mut min_cost = None;
+        let mut best_proposal = None;
+        let mut proposal = Proposal(HashMap::new());
+        for (name, _) in &ingredients.0 {
+            proposal.0.insert(name.to_string(), 0);
+        }
+        // optimize greedily
+        for (name, _) in &ingredients.0 {
+            *proposal.0.insert(name, random() % maxn);
+        }
+        let cost = target.evaluate(&proposal, ingredients);
+        min_cost = match min_cost {
+            None => {
+                best_proposal = Some(proposal);
+                Some(cost)
+            }
+            Some(min_cost) => {
+                if cost < min_cost {
+                    best_proposal = Some(proposal);
+                    Some(cost)
+                } else {
+                    Some(min_cost)
+                }
+            }
+        };
+        println!("Add {}, cost {}", proposal.unwrap(), target.evaluate(&proposal, ingredients));
+    }
+    println!("Best: Add {}, cost {}", best_proposal.unwrap(), target.evaluate(&best_proposal, ingredients));
+    best_proposal
+}
 
 fn help() {
     println!("usage: mix target.toml ingredient0.toml ... ingredient10.toml");
