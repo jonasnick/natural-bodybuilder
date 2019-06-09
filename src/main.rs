@@ -1,6 +1,12 @@
+use std::fs::File;
+use std::io::BufReader;
+use std::io::prelude::*;
 use std::collections::HashMap;
+use serde::{Serialize, Deserialize};
 
+#[derive(Serialize, Deserialize, Debug)]
 struct Ingredient {
+    name: String,
     g: u64,
     kcal: u64,
     carb: u64,
@@ -56,6 +62,7 @@ impl Proposal {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug)]
 struct Target {
     kcal: u64,
     carb: u64,
@@ -73,6 +80,7 @@ impl Target {
     }
 }
 
+#[derive(Debug)]
 struct NormalizedTarget {
     carb: f64,
     fat: f64,
@@ -104,6 +112,7 @@ fn optimize(target: &NormalizedTarget, ingredients: &Ingredients, steps: usize) 
         for (name, _) in &ingredients.0 {
             *proposal.0.get_mut(name).unwrap() += 1;
             let cost = target.evaluate(&proposal, ingredients);
+            println!("\tAdd {}, cost {}", name, cost);
             min_cost = match min_cost {
                 None => {
                     best_ingredient = Some(name);
@@ -121,17 +130,83 @@ fn optimize(target: &NormalizedTarget, ingredients: &Ingredients, steps: usize) 
             *proposal.0.get_mut(name).unwrap() -= 1;
         }
         *proposal.0.get_mut(best_ingredient.unwrap()).unwrap() += 1;
-        println!("cost {}", target.evaluate(&proposal, ingredients));
+        println!("Add {}, cost {}", best_ingredient.unwrap(), target.evaluate(&proposal, ingredients));
     }
     proposal
 }
+
+//fn randomize(target: &NormalizedTarget, ingredients: &Ingredients, steps: usize) -> Proposal {
+    //let maxn = 100;
+
+    //let mut proposal = Proposal(HashMap::new());
+    //for (name, _) in &ingredients.0 {
+        //proposal.0.insert(name.to_string(), 0);
+    //}
+    //for _ in 0..steps {
+        //let mut min_cost = None;
+        //let mut best_ingredient = None;
+        //// optimize greedily
+        //for (name, _) in &ingredients.0 {
+            //*proposal.0.get_mut(name).unwrap() += 1;
+            //let cost = target.evaluate(&proposal, ingredients);
+            //println!("\tAdd {}, cost {}", name, cost);
+            //min_cost = match min_cost {
+                //None => {
+                    //best_ingredient = Some(name);
+                    //Some(cost)
+                //}
+                //Some(min_cost) => {
+                    //if cost < min_cost {
+                        //best_ingredient = Some(name);
+                        //Some(cost)
+                    //} else {
+                        //Some(min_cost)
+                    //}
+                //}
+            //};
+            //*proposal.0.get_mut(name).unwrap() -= 1;
+        //}
+        //*proposal.0.get_mut(best_ingredient.unwrap()).unwrap() += 1;
+        //println!("Add {}, cost {}", best_ingredient.unwrap(), target.evaluate(&proposal, ingredients));
+    //}
+    //proposal
+//}
 
 fn help() {
     println!("usage: mix target.toml ingredient0.toml ... ingredient10.toml");
 }
 
+pub fn read_file(filepath: &str) -> String {
+    let file = File::open(filepath)
+        .expect("could not open file");
+    let mut buffered_reader = BufReader::new(file);
+    let mut contents = String::new();
+    let _number_of_bytes: usize = match buffered_reader.read_to_string(&mut contents) {
+        Ok(number_of_bytes) => number_of_bytes,
+        Err(_err) => 0
+    };
+
+    contents
+}
+
 fn main() {
-    help();
+    if std::env::args().len() < 3 {
+        help();
+        return
+    }
+    let target_path = std::env::args().nth(1).expect("no pattern given");
+    let target: Target = toml::from_str(&read_file(&target_path)).expect("can't read target");
+    let target_normalized = target.normalize();
+    println!("Target {:?}", target_normalized);
+    let mut ingredients = Ingredients(HashMap::new());
+    for ingredient_path in std::env::args().skip(2) {
+        let ingredient: Ingredient = toml::from_str(&read_file(&ingredient_path)).expect("can't read target");
+        let normalized = ingredient.normalize();
+        println!("Ingredient {} {:?}", &ingredient.name, normalized);
+        ingredients.0.insert(ingredient.name.clone(), normalized);
+    }
+    let proposal = optimize(&target_normalized, &ingredients, 10);
+    println!("{:?}", proposal);
 }
 
 #[cfg(test)]
@@ -140,6 +215,7 @@ mod tests {
     #[test]
     fn test_normalize() {
         let i = Ingredient {
+            name: "foo",
             g: 1000,
             kcal: 100,
             carb: 300,
