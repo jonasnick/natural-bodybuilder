@@ -139,18 +139,19 @@ fn optimize(target: &NormalizedTarget, ingredients: &Ingredients, steps: usize) 
 fn randomize(target: &NormalizedTarget, ingredients: &Ingredients, steps: usize) -> Proposal {
     let maxn = 100;
 
+    let mut best_proposal = None;
+    let mut min_cost = None;
     for _ in 0..steps {
-        let mut min_cost = None;
-        let mut best_proposal = None;
         let mut proposal = Proposal(HashMap::new());
         for (name, _) in &ingredients.0 {
             proposal.0.insert(name.to_string(), 0);
         }
-        // optimize greedily
         for (name, _) in &ingredients.0 {
-            *proposal.0.insert(name, random() % maxn);
+            let n: u64 = random();
+            proposal.0.insert(name.to_string(), n % maxn);
         }
         let cost = target.evaluate(&proposal, ingredients);
+        println!("Add {:?}, cost {}", &proposal, cost);
         min_cost = match min_cost {
             None => {
                 best_proposal = Some(proposal);
@@ -165,10 +166,9 @@ fn randomize(target: &NormalizedTarget, ingredients: &Ingredients, steps: usize)
                 }
             }
         };
-        println!("Add {}, cost {}", proposal.unwrap(), target.evaluate(&proposal, ingredients));
     }
-    println!("Best: Add {}, cost {}", best_proposal.unwrap(), target.evaluate(&best_proposal, ingredients));
-    best_proposal
+    println!("Best: Add {:?}, cost {}", best_proposal.clone().unwrap(), min_cost.unwrap());
+    best_proposal.unwrap()
 }
 
 fn help() {
@@ -204,7 +204,7 @@ fn main() {
         println!("Ingredient {} {:?}", &ingredient.name, normalized);
         ingredients.0.insert(ingredient.name.clone(), normalized);
     }
-    let proposal = optimize(&target_normalized, &ingredients, 10);
+    let proposal = randomize(&target_normalized, &ingredients, 10);
     println!("{:?}", proposal);
 }
 
@@ -214,7 +214,7 @@ mod tests {
     #[test]
     fn test_normalize() {
         let i = Ingredient {
-            name: "foo",
+            name: "foo".to_string(),
             g: 1000,
             kcal: 100,
             carb: 300,
