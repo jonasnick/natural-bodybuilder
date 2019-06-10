@@ -5,10 +5,6 @@ use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
 use rand::prelude::*;
 
-/// TODO: cargo run ./contrib/target-huel.toml ./contrib/apple.toml ./contrib/test_ingredient3.toml ./contrib/test_ingredient4.toml
-/// shows that there is something deeply wrong...
-/// there's something deeply wrong... also need to repair the tests
-
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct Ingredient {
     name: String,
@@ -27,23 +23,19 @@ impl Ingredient {
         let carb = self.carb as f64 / (self.kcal as f64);
         let fat = self.fat as f64 / (self.kcal as f64);
         let protein = self.protein as f64 / (self.kcal as f64);
-        let normalization = carb + fat + protein;
         NormalizedIngredient {
-            carb: carb / normalization,
-            fat: fat / normalization,
-            protein: protein / normalization,
+            carb: carb,
+            fat: fat,
+            protein: protein,
         }
     }
 }
 
-/// carb, fat and protein per kcal
+/// carb, fat and protein in grams per kcal
 #[derive(Clone, Debug)]
 struct NormalizedIngredient {
-    // in ratio
     carb: f64,
-    // in ratio
     fat: f64,
-    // in ratio
     protein: f64,
 }
 
@@ -73,8 +65,6 @@ impl Proposal {
         result.carb /= n;
         result.fat /= n;
         result.protein /= n;
-
-        assert_eq!((result.carb + result.fat + result.protein).round() as u64, 1);
 
         return result;
     }
@@ -125,9 +115,10 @@ impl NormalizedTarget {
     /// Using squared difference, lower is better
     fn evaluate(&self, proposal: &Proposal, ingredients: &Ingredients) -> f64 {
         let proposal_mix = proposal.mix(&ingredients);
-        return square(self.carb - proposal_mix.carb)
-            + square(self.fat - proposal_mix.fat)
-            + square(self.protein - proposal_mix.protein);
+        let sum = proposal_mix.carb + proposal_mix.fat + proposal_mix.protein;
+        return square(self.carb - proposal_mix.carb/sum)
+            + square(self.fat - proposal_mix.fat/sum)
+            + square(self.protein - proposal_mix.protein/sum);
     }
 }
 
@@ -246,9 +237,7 @@ fn main() {
     let proposal_kcal = proposal.kcal();
     for (name, n) in &proposal.0 {
         let ingredient_kcal = *n as f64*(target.kcal as f64/proposal_kcal as f64);
-        println!("{} {}", name, ingredient_kcal);
         gram_proposal.0.insert(name.to_string(), (ingredient_kcal*(raw_ingredients[name].g as f64/raw_ingredients[name].kcal as f64)).round() as u64);
-        let factor = raw_ingredients[name].kcal as f64;
     }
     println!("");
     println!("---- RESULT ----");
@@ -292,9 +281,9 @@ mod tests {
         ingredients.0.insert(
             "apple".to_string(),
             NormalizedIngredient {
-                carb: 1.0,
-                fat: 2.0,
-                protein: 3.0,
+                carb: 20.0,
+                fat: 30.0,
+                protein: 50.0,
             },
         );
         ingredients.0.insert(
