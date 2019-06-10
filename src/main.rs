@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
 use rand::prelude::*;
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 struct Ingredient {
     name: String,
     g: u64,
@@ -17,10 +17,14 @@ struct Ingredient {
 
 impl Ingredient {
     fn normalize(&self) -> NormalizedIngredient {
+        let carb = self.carb as f64 / (self.kcal as f64);
+        let fat = self.fat as f64 / (self.kcal as f64);
+        let protein = self.protein as f64 / (self.kcal as f64);
+        let normalization = carb + fat + protein;
         NormalizedIngredient {
-            carb: self.carb as f64 / (self.kcal as f64),
-            fat: self.fat as f64 / (self.kcal as f64),
-            protein: self.protein as f64 / (self.kcal as f64),
+            carb: carb / normalization,
+            fat: fat / normalization,
+            protein: protein / normalization,
         }
     }
 }
@@ -61,6 +65,13 @@ impl Proposal {
         result.protein /= n;
         return result;
     }
+    fn kcal(&self) -> u64 {
+        let mut sum = 0;
+        for (_, n) in &self.0 {
+            sum += n;
+        }
+        sum
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -74,9 +85,9 @@ struct Target {
 impl Target {
     fn normalize(&self) -> NormalizedTarget {
         NormalizedTarget {
-            carb: self.carb as f64 / (self.kcal as f64),
-            fat: self.fat as f64 / (self.kcal as f64),
-            protein: self.protein as f64 / (self.kcal as f64),
+            carb: self.carb as f64 / 100.0,
+            fat: self.fat as f64 / 100.0,
+            protein: self.protein as f64 / 100.0,
         }
     }
 }
@@ -113,7 +124,7 @@ fn optimize(target: &NormalizedTarget, ingredients: &Ingredients, steps: usize) 
         for (name, _) in &ingredients.0 {
             *proposal.0.get_mut(name).unwrap() += 1;
             let cost = target.evaluate(&proposal, ingredients);
-            println!("\tAdd {}, cost {}", name, cost);
+            //println!("\tAdd {}, cost {}", name, cost);
             min_cost = match min_cost {
                 None => {
                     best_ingredient = Some(name);
@@ -131,7 +142,7 @@ fn optimize(target: &NormalizedTarget, ingredients: &Ingredients, steps: usize) 
             *proposal.0.get_mut(name).unwrap() -= 1;
         }
         *proposal.0.get_mut(best_ingredient.unwrap()).unwrap() += 1;
-        println!("Add {}, cost {}", best_ingredient.unwrap(), target.evaluate(&proposal, ingredients));
+        //println!("Add {}, cost {}", best_ingredient.unwrap(), target.evaluate(&proposal, ingredients));
     }
     proposal
 }
@@ -196,16 +207,44 @@ fn main() {
     let target_path = std::env::args().nth(1).expect("no pattern given");
     let target: Target = toml::from_str(&read_file(&target_path)).expect("can't read target");
     let target_normalized = target.normalize();
-    println!("Target {:?}", target_normalized);
+    println!("Starting search with");
+    println!("\tTarget {:?}", target_normalized);
     let mut ingredients = Ingredients(HashMap::new());
+    let mut raw_ingredients = HashMap::new();
     for ingredient_path in std::env::args().skip(2) {
         let ingredient: Ingredient = toml::from_str(&read_file(&ingredient_path)).expect("can't read target");
+        raw_ingredients.insert(ingredient.name.clone(), ingredient.clone());
         let normalized = ingredient.normalize();
-        println!("Ingredient {} {:?}", &ingredient.name, normalized);
+        println!("\tIngredient {} {:?}", &ingredient.name, normalized);
         ingredients.0.insert(ingredient.name.clone(), normalized);
     }
-    let proposal = randomize(&target_normalized, &ingredients, 10);
-    println!("{:?}", proposal);
+
+    let proposal = optimize(&target_normalized, &ingredients, 1000);
+    println!("\tFound {:?} with cost {}", proposal, target_normalized.evaluate(&proposal, &ingredients));
+
+    // Compute grams for each ingredient from kcal
+    let mut gram_proposal = Proposal(HashMap::new());
+    let proposal_kcal = proposal.kcal();
+    for (name, n) in &proposal.0 {
+        let ingredient_kcal = *n as f64*(target.kcal as f64/proposal_kcal as f64);
+        println!("{} {}", name, ingredient_kcal);
+        gram_proposal.0.insert(name.to_string(), (ingredient_kcal*(raw_ingredients[name].g as f64/raw_ingredients[name].kcal as f64)) as u64);
+    }
+    println!("");
+    println!("---- RESULT ----");
+    println!("Mix {:?}", gram_proposal);
+
+    // Print macros of result
+    let mut carb = 0.0;
+    let mut fat = 0.0;
+    let mut protein = 0.0;
+    for (name, g) in &gram_proposal.0 {
+        let factor = (*g as f64 / raw_ingredients[name].g as f64);
+        carb += factor * raw_ingredients[name].carb as f64;
+        fat += factor * raw_ingredients[name].fat as f64;
+        protein += factor * raw_ingredients[name].protein as f64;
+    }
+    println!("Results in {}g carb, {}g fat, {}g protein in {} kcal.", carb.round(), fat.round(), protein.round(), target.kcal);
 }
 
 #[cfg(test)]
