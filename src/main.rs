@@ -5,13 +5,20 @@ use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
 use rand::prelude::*;
 
+/// TODO: cargo run ./contrib/target-huel.toml ./contrib/apple.toml ./contrib/test_ingredient3.toml ./contrib/test_ingredient4.toml
+/// shows that there is something deeply wrong...
+/// there's something deeply wrong... also need to repair the tests
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct Ingredient {
     name: String,
     g: u64,
     kcal: u64,
+    // in g
     carb: u64,
+    // in g
     fat: u64,
+    // in g
     protein: u64,
 }
 
@@ -32,8 +39,11 @@ impl Ingredient {
 /// carb, fat and protein per kcal
 #[derive(Clone, Debug)]
 struct NormalizedIngredient {
+    // in ratio
     carb: f64,
+    // in ratio
     fat: f64,
+    // in ratio
     protein: f64,
 }
 
@@ -63,6 +73,9 @@ impl Proposal {
         result.carb /= n;
         result.fat /= n;
         result.protein /= n;
+
+        assert_eq!((result.carb + result.fat + result.protein).round() as u64, 1);
+
         return result;
     }
     fn kcal(&self) -> u64 {
@@ -77,8 +90,11 @@ impl Proposal {
 #[derive(Serialize, Deserialize, Debug)]
 struct Target {
     kcal: u64,
+    // in ratio
     carb: u64,
+    // in ratio
     fat: u64,
+    // in ratio
     protein: u64,
 }
 
@@ -94,8 +110,11 @@ impl Target {
 
 #[derive(Debug)]
 struct NormalizedTarget {
+    // in ratio
     carb: f64,
+    // in ratio
     fat: f64,
+    // in ratio
     protein: f64,
 }
 
@@ -219,16 +238,17 @@ fn main() {
         ingredients.0.insert(ingredient.name.clone(), normalized);
     }
 
-    let proposal = optimize(&target_normalized, &ingredients, 1000);
+    let proposal = optimize(&target_normalized, &ingredients, 2000);
     println!("\tFound {:?} with cost {}", proposal, target_normalized.evaluate(&proposal, &ingredients));
 
-    // Compute grams for each ingredient from kcal
+    // Compute grams for each ingredient because proposal is only in kcal
     let mut gram_proposal = Proposal(HashMap::new());
     let proposal_kcal = proposal.kcal();
     for (name, n) in &proposal.0 {
         let ingredient_kcal = *n as f64*(target.kcal as f64/proposal_kcal as f64);
         println!("{} {}", name, ingredient_kcal);
-        gram_proposal.0.insert(name.to_string(), (ingredient_kcal*(raw_ingredients[name].g as f64/raw_ingredients[name].kcal as f64)) as u64);
+        gram_proposal.0.insert(name.to_string(), (ingredient_kcal*(raw_ingredients[name].g as f64/raw_ingredients[name].kcal as f64)).round() as u64);
+        let factor = raw_ingredients[name].kcal as f64;
     }
     println!("");
     println!("---- RESULT ----");
@@ -239,12 +259,13 @@ fn main() {
     let mut fat = 0.0;
     let mut protein = 0.0;
     for (name, g) in &gram_proposal.0 {
-        let factor = (*g as f64 / raw_ingredients[name].g as f64);
+        let factor = *g as f64 / raw_ingredients[name].g as f64;
         carb += factor * raw_ingredients[name].carb as f64;
         fat += factor * raw_ingredients[name].fat as f64;
         protein += factor * raw_ingredients[name].protein as f64;
     }
-    println!("Results in {}g carb, {}g fat, {}g protein in {} kcal.", carb.round(), fat.round(), protein.round(), target.kcal);
+    let sum = carb + fat + protein;
+    println!("Results in {}g carb, {}g fat, {}g protein in {} kcal ({}:{}:{}).", carb.round(), fat.round(), protein.round(), target.kcal, (100.0*carb/sum).round(), (100.0*fat/sum).round(), (100.0*protein/sum).round());
 }
 
 #[cfg(test)]
@@ -261,9 +282,9 @@ mod tests {
             protein: 100,
         };
         let normalized = i.normalize();
-        assert_eq!(normalized.carb as u64, 3);
-        assert_eq!(normalized.fat as u64, 2);
-        assert_eq!(normalized.protein as u64, 1);
+        assert_eq!((normalized.carb*100.0).round() as u64, 50);
+        assert_eq!((normalized.fat*100.0).round() as u64, 33);
+        assert_eq!((normalized.protein*100.0).round() as u64, 17);
     }
 
     fn test_ingredients() -> Ingredients {
