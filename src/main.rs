@@ -52,6 +52,7 @@ struct Ingredients(HashMap<String, NormalizedIngredient>);
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Proposal(HashMap<String, u64>);
 impl Proposal {
+    /// Mixes the ingredients in the proposal and returns a single normalized ingredient
     fn mix(&self, ingredients: &Ingredients) -> NormalizedIngredient {
         let mut result = NormalizedIngredient::new();
         let mut n = 0.0;
@@ -235,9 +236,9 @@ mod tests {
             protein: 100,
         };
         let normalized = i.normalize();
-        assert_eq!((normalized.carb*100.0).round() as u64, 50);
-        assert_eq!((normalized.fat*100.0).round() as u64, 33);
-        assert_eq!((normalized.protein*100.0).round() as u64, 17);
+        assert_eq!(normalized.carb.round() as u64, 3);
+        assert_eq!(normalized.fat.round() as u64, 2);
+        assert_eq!(normalized.protein.round() as u64, 1);
     }
 
     fn test_ingredients() -> Ingredients {
@@ -253,9 +254,9 @@ mod tests {
         ingredients.0.insert(
             "banana".to_string(),
             NormalizedIngredient {
-                carb: 4.0,
-                fat: 5.0,
-                protein: 6.0,
+                carb: 40.0,
+                fat: 50.0,
+                protein: 60.0,
             },
         );
         ingredients
@@ -267,32 +268,32 @@ mod tests {
         let mut proposal = Proposal(HashMap::new());
         proposal.0.insert("apple".to_string(), 1);
         let mix = proposal.mix(&ingredients);
-        assert_eq!(mix.carb as u64, 1);
-        assert_eq!(mix.fat as u64, 2);
-        assert_eq!(mix.protein as u64, 3);
+        assert_eq!(mix.carb as u64, 20);
+        assert_eq!(mix.fat as u64, 30);
+        assert_eq!(mix.protein as u64, 50);
 
         proposal.0.clear();
         proposal.0.insert("apple".to_string(), 2);
         let mix = proposal.mix(&ingredients);
-        assert_eq!(mix.carb as u64, 1);
-        assert_eq!(mix.fat as u64, 2);
-        assert_eq!(mix.protein as u64, 3);
+        assert_eq!(mix.carb as u64, 20);
+        assert_eq!(mix.fat as u64, 30);
+        assert_eq!(mix.protein as u64, 50);
 
         proposal.0.clear();
         proposal.0.insert("apple".to_string(), 2);
         proposal.0.insert("banana".to_string(), 1);
         let mix = proposal.mix(&ingredients);
-        assert_eq!(mix.carb.round() as u64, 2);
-        assert_eq!(mix.fat as u64, 3);
-        assert_eq!(mix.protein as u64, 4);
+        assert_eq!(mix.carb.round() as u64, 27);
+        assert_eq!(mix.fat.round() as u64, 37);
+        assert_eq!(mix.protein.round() as u64, 53);
     }
 
     #[test]
     fn test_evaluate() {
         let t = NormalizedTarget {
-            carb: 1.0,
-            fat: 2.0,
-            protein: 3.0,
+            carb: 0.20,
+            fat: 0.30,
+            protein: 0.50,
         };
         let ingredients = test_ingredients();
         let mut proposal = Proposal(HashMap::new());
@@ -302,22 +303,32 @@ mod tests {
         assert_eq!(t.evaluate(&proposal, &ingredients).round() as u64, 0);
 
         let t = NormalizedTarget {
-            carb: 2.0,
-            fat: 4.0,
-            protein: 6.0,
+            carb: 0.3,
+            fat: 0.5,
+            protein: 0.2,
         };
         assert_eq!(
-            t.evaluate(&proposal, &ingredients).round() as u64,
-            1 + 4 + 9
+            t.evaluate(&proposal, &ingredients),
+            0.1*0.1 + 0.2*0.2 + 0.3*0.3
         );
+
+        let t = NormalizedTarget {
+            carb: 0.20,
+            fat: 0.30,
+            protein: 0.50,
+        };
+        let mut proposal = Proposal(HashMap::new());
+        proposal.0.insert("banana".to_string(), 1);
+        assert_eq!(t.evaluate(&proposal, &ingredients).round() as u64, 0);
     }
 
     #[test]
     fn test_optimize() {
+        // apple target
         let t = NormalizedTarget {
-            carb: 1.0,
-            fat: 2.0,
-            protein: 3.0,
+            carb: 0.20,
+            fat: 0.30,
+            protein: 0.50,
         };
         let ingredients = test_ingredients();
         let proposal = optimize(&t, &ingredients, 2);
@@ -326,10 +337,11 @@ mod tests {
         expected_proposal.0.insert("banana".to_string(), 0);
         assert_eq!(proposal, expected_proposal);
 
+        // banana target
         let t = NormalizedTarget {
-            carb: 4.0,
-            fat: 5.0,
-            protein: 6.0,
+            carb: 0.26,
+            fat: 0.33,
+            protein: 0.4,
         };
         let ingredients = test_ingredients();
         let proposal = optimize(&t, &ingredients, 2);
@@ -339,9 +351,9 @@ mod tests {
         assert_eq!(proposal, expected_proposal);
 
         let t = NormalizedTarget {
-            carb: 2.0,
-            fat: 3.5,
-            protein: 4.5,
+            carb: 0.23,
+            fat: 0.315,
+            protein: 0.45,
         };
         let ingredients = test_ingredients();
         let proposal = optimize(&t, &ingredients, 2);
