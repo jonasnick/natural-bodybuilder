@@ -86,6 +86,14 @@ struct Target {
     fat: u64,
     // in ratio
     protein: u64,
+    // constraints
+    constraint: Option<Vec<TargetConstraint>>
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct TargetConstraint {
+    name: String,
+    g: u64
 }
 
 impl Target {
@@ -122,19 +130,31 @@ impl NormalizedTarget {
     }
 }
 
-fn optimize(target: &NormalizedTarget, ingredients: &Ingredients, steps: usize) -> Proposal {
+fn optimize(target: &NormalizedTarget, initial_proposal: Proposal, ingredients: &Ingredients, steps: usize) -> Proposal {
     let mut proposal = Proposal(HashMap::new());
+    let mut assigned_pieces = 0;
     for (name, _) in &ingredients.0 {
-        proposal.0.insert(name.to_string(), 0);
+        match initial_proposal.0.get(name) {
+            None => {
+                proposal.0.insert(name.to_string(), 0);
+            },
+            Some(pieces) => {
+                proposal.0.insert(name.to_string(), *pieces);
+                assigned_pieces += *pieces;
+            }
+        }
     }
-    for _ in 0..steps {
+    for _ in 0..steps - assigned_pieces as usize {
         let mut min_cost = None;
         let mut best_ingredient = None;
         // optimize greedily
         for (name, _) in &ingredients.0 {
+            if initial_proposal.0.contains_key(name) {
+                // don't consider ingredients in the initial_proposal
+                continue
+            }
             *proposal.0.get_mut(name).unwrap() += 1;
             let cost = target.evaluate(&proposal, ingredients);
-            //println!("\tAdd {}, cost {}", name, cost);
             min_cost = match min_cost {
                 None => {
                     best_ingredient = Some(name);
@@ -152,7 +172,6 @@ fn optimize(target: &NormalizedTarget, ingredients: &Ingredients, steps: usize) 
             *proposal.0.get_mut(name).unwrap() -= 1;
         }
         *proposal.0.get_mut(best_ingredient.unwrap()).unwrap() += 1;
-        //println!("Add {}, cost {}", best_ingredient.unwrap(), target.evaluate(&proposal, ingredients));
     }
     proposal
 }
@@ -184,6 +203,7 @@ fn main() {
     let target_normalized = target.normalize();
     println!("Starting search with");
     println!("\tTarget {:?}", target_normalized);
+    println!("\tconstraints {:?}", target.constraint);
     let mut ingredients = Ingredients(HashMap::new());
     let mut raw_ingredients = HashMap::new();
     for ingredient_path in std::env::args().skip(2) {
@@ -194,14 +214,32 @@ fn main() {
         ingredients.0.insert(ingredient.name.clone(), normalized);
     }
 
-    let proposal = optimize(&target_normalized, &ingredients, 2000);
+    let optimization_steps = 2000;
+    let mut initial_proposal = Proposal(HashMap::new());
+    match target.constraint {
+        None => { },
+        Some(constraints) => {
+            for constraint in constraints {
+                if !raw_ingredients.contains_key(&constraint.name) {
+                    panic!("Missing constraint ingredient {}.", constraint.name);
+                }
+                let ingredient = &raw_ingredients[&constraint.name];
+                let piece_per_kcal = optimization_steps as f64/target.kcal as f64;
+                let kcal_per_gram = ingredient.kcal as f64/ingredient.g as f64;
+                let constraint_kcal = constraint.g as f64*kcal_per_gram;
+                let constraint_pieces = (constraint_kcal*piece_per_kcal).round() as u64;
+                initial_proposal.0.insert(constraint.name.to_string(), constraint_pieces);
+            }
+        }
+    };
+
+    let proposal = optimize(&target_normalized, initial_proposal, &ingredients, optimization_steps);
     println!("\tFound {:?} with cost {}", proposal, target_normalized.evaluate(&proposal, &ingredients));
 
     // Compute grams for each ingredient because proposal is only in kcal
     let mut gram_proposal = Proposal(HashMap::new());
-    let proposal_kcal = proposal.kcal();
     for (name, n) in &proposal.0 {
-        let ingredient_kcal = *n as f64*(target.kcal as f64/proposal_kcal as f64);
+        let ingredient_kcal = *n as f64*(target.kcal as f64/proposal.kcal() as f64);
         gram_proposal.0.insert(name.to_string(), (ingredient_kcal*(raw_ingredients[name].g as f64/raw_ingredients[name].kcal as f64)).round() as u64);
     }
     println!("");
