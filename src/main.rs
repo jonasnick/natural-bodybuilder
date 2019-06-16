@@ -1,8 +1,8 @@
-use std::fs::File;
-use std::io::BufReader;
-use std::io::prelude::*;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use serde::{Serialize, Deserialize};
+use std::fs::File;
+use std::io::prelude::*;
+use std::io::BufReader;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct Ingredient {
@@ -48,6 +48,7 @@ impl NormalizedIngredient {
     }
 }
 struct Ingredients(HashMap<String, NormalizedIngredient>);
+struct RawIngredients(HashMap<String, Ingredient>);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Proposal(HashMap<String, u64>);
@@ -87,13 +88,37 @@ struct Target {
     // in ratio
     protein: u64,
     // constraints
-    constraint: Option<Vec<TargetConstraint>>
+    constraint_exact: Option<Vec<TargetConstraint>>,
+    // constraints
+    constraint_at_least: Option<Vec<TargetConstraint>>,
+    // constraints
+    constraint_at_most: Option<Vec<TargetConstraint>>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 struct TargetConstraint {
     name: String,
-    g: u64
+    g: u64,
+}
+
+impl TargetConstraint {
+    /// compute pieces for optimization
+    fn to_pieces(
+        &self,
+        target: &Target,
+        raw_ingredients: &RawIngredients,
+        optimization_steps: usize,
+    ) -> u64 {
+        if !raw_ingredients.0.contains_key(&self.name) {
+            panic!("Missing constraint ingredient {}.", self.name);
+        }
+        let ingredient = &raw_ingredients.0[&self.name];
+        let piece_per_kcal = optimization_steps as f64 / target.kcal as f64;
+        let kcal_per_gram = ingredient.kcal as f64 / ingredient.g as f64;
+        let constraint_kcal = self.g as f64 * kcal_per_gram;
+        let constraint_pieces = (constraint_kcal * piece_per_kcal).round() as u64;
+        constraint_pieces
+    }
 }
 
 impl Target {
@@ -102,6 +127,57 @@ impl Target {
             carb: self.carb as f64 / 100.0,
             fat: self.fat as f64 / 100.0,
             protein: self.protein as f64 / 100.0,
+        }
+    }
+}
+
+struct TargetConstraints {
+    // constraints
+    exact: Proposal,
+    at_least: Proposal,
+    at_most: Proposal,
+}
+
+impl TargetConstraints {
+    fn new() -> TargetConstraints {
+        TargetConstraints {
+            exact: Proposal(HashMap::new()),
+            at_least: Proposal(HashMap::new()),
+            at_most: Proposal(HashMap::new()),
+        }
+    }
+
+    fn from_target(
+        target: &Target,
+        raw_ingredients: &RawIngredients,
+        optimization_steps: usize,
+    ) -> TargetConstraints {
+        let mut exact = Proposal(HashMap::new());
+        let mut at_least = Proposal(HashMap::new());
+        let mut at_most = Proposal(HashMap::new());
+
+        let insert_pieces = |constraints: &Option<Vec<TargetConstraint>>,
+                             insert_target: &mut Proposal| {
+            match constraints {
+                None => {}
+                Some(constraints) => {
+                    for constraint in constraints {
+                        let constraint_pieces =
+                            constraint.to_pieces(target, raw_ingredients, optimization_steps);
+                        insert_target
+                            .0
+                            .insert(constraint.name.to_string(), constraint_pieces);
+                    }
+                }
+            }
+        };
+        insert_pieces(&target.constraint_exact, &mut exact);
+        insert_pieces(&target.constraint_at_least, &mut at_least);
+        insert_pieces(&target.constraint_at_most, &mut at_most);
+        TargetConstraints {
+            exact: exact,
+            at_least: at_least,
+            at_most: at_most,
         }
     }
 }
@@ -124,34 +200,45 @@ impl NormalizedTarget {
     fn evaluate(&self, proposal: &Proposal, ingredients: &Ingredients) -> f64 {
         let proposal_mix = proposal.mix(&ingredients);
         let sum = proposal_mix.carb + proposal_mix.fat + proposal_mix.protein;
-        return square(self.carb - proposal_mix.carb/sum)
-            + square(self.fat - proposal_mix.fat/sum)
-            + square(self.protein - proposal_mix.protein/sum);
+        return square(self.carb - proposal_mix.carb / sum)
+            + square(self.fat - proposal_mix.fat / sum)
+            + square(self.protein - proposal_mix.protein / sum);
     }
 }
 
-fn optimize(target: &NormalizedTarget, initial_proposal: Proposal, ingredients: &Ingredients, steps: usize) -> Proposal {
+fn optimize(
+    target: &NormalizedTarget,
+    constraints: TargetConstraints,
+    ingredients: &Ingredients,
+    steps: usize,
+) -> Proposal {
     let mut proposal = Proposal(HashMap::new());
     let mut assigned_pieces = 0;
+
     for (name, _) in &ingredients.0 {
-        match initial_proposal.0.get(name) {
-            None => {
-                proposal.0.insert(name.to_string(), 0);
-            },
-            Some(pieces) => {
-                proposal.0.insert(name.to_string(), *pieces);
-                assigned_pieces += *pieces;
-            }
-        }
+        proposal.0.insert(name.to_string(), 0);
     }
+    let mut insert_constraints = |constraints: &Proposal| {
+        for (name, pieces) in &constraints.0 {
+            proposal.0.insert(name.to_string(), *pieces);
+            assigned_pieces += *pieces;
+        }
+    };
+    insert_constraints(&constraints.at_least);
+    insert_constraints(&constraints.exact);
     for _ in 0..steps - assigned_pieces as usize {
         let mut min_cost = None;
         let mut best_ingredient = None;
         // optimize greedily
         for (name, _) in &ingredients.0 {
-            if initial_proposal.0.contains_key(name) {
+            if constraints.exact.0.contains_key(name) {
                 // don't consider ingredients in the initial_proposal
-                continue
+                continue;
+            }
+            if constraints.at_most.0.contains_key(name) {
+                if proposal.0[name] >= constraints.at_most.0[name] {
+                    continue;
+                }
             }
             *proposal.0.get_mut(name).unwrap() += 1;
             let cost = target.evaluate(&proposal, ingredients);
@@ -181,13 +268,12 @@ fn help() {
 }
 
 pub fn read_file(filepath: &str) -> String {
-    let file = File::open(filepath)
-        .expect("could not open file");
+    let file = File::open(filepath).expect("could not open file");
     let mut buffered_reader = BufReader::new(file);
     let mut contents = String::new();
     let _number_of_bytes: usize = match buffered_reader.read_to_string(&mut contents) {
         Ok(number_of_bytes) => number_of_bytes,
-        Err(_err) => 0
+        Err(_err) => 0,
     };
 
     contents
@@ -196,51 +282,55 @@ pub fn read_file(filepath: &str) -> String {
 fn main() {
     if std::env::args().len() < 3 {
         help();
-        return
+        return;
     }
     let target_path = std::env::args().nth(1).expect("no pattern given");
     let target: Target = toml::from_str(&read_file(&target_path)).expect("can't read target");
     let target_normalized = target.normalize();
     println!("Starting search with");
     println!("\tTarget {:?}", target_normalized);
-    println!("\tconstraints {:?}", target.constraint);
+    println!(
+        "\tconstraints exact: {:?}, at least: {:?}, at most {:?}",
+        target.constraint_exact, target.constraint_at_least, target.constraint_at_most
+    );
     let mut ingredients = Ingredients(HashMap::new());
-    let mut raw_ingredients = HashMap::new();
+    let mut raw_ingredients = RawIngredients(HashMap::new());
     for ingredient_path in std::env::args().skip(2) {
-        let ingredient: Ingredient = toml::from_str(&read_file(&ingredient_path)).expect("can't read target");
-        raw_ingredients.insert(ingredient.name.clone(), ingredient.clone());
+        let ingredient: Ingredient =
+            toml::from_str(&read_file(&ingredient_path)).expect("can't read target");
+        raw_ingredients
+            .0
+            .insert(ingredient.name.clone(), ingredient.clone());
         let normalized = ingredient.normalize();
         println!("\tIngredient {} {:?}", &ingredient.name, normalized);
         ingredients.0.insert(ingredient.name.clone(), normalized);
     }
 
     let optimization_steps = 2000;
-    let mut initial_proposal = Proposal(HashMap::new());
-    match target.constraint {
-        None => { },
-        Some(constraints) => {
-            for constraint in constraints {
-                if !raw_ingredients.contains_key(&constraint.name) {
-                    panic!("Missing constraint ingredient {}.", constraint.name);
-                }
-                let ingredient = &raw_ingredients[&constraint.name];
-                let piece_per_kcal = optimization_steps as f64/target.kcal as f64;
-                let kcal_per_gram = ingredient.kcal as f64/ingredient.g as f64;
-                let constraint_kcal = constraint.g as f64*kcal_per_gram;
-                let constraint_pieces = (constraint_kcal*piece_per_kcal).round() as u64;
-                initial_proposal.0.insert(constraint.name.to_string(), constraint_pieces);
-            }
-        }
-    };
+    let constraints = TargetConstraints::from_target(&target, &raw_ingredients, optimization_steps);
 
-    let proposal = optimize(&target_normalized, initial_proposal, &ingredients, optimization_steps);
-    println!("\tFound {:?} with cost {}", proposal, target_normalized.evaluate(&proposal, &ingredients));
+    let proposal = optimize(
+        &target_normalized,
+        constraints,
+        &ingredients,
+        optimization_steps,
+    );
+    println!(
+        "\tFound {:?} with cost {}",
+        proposal,
+        target_normalized.evaluate(&proposal, &ingredients)
+    );
 
     // Compute grams for each ingredient because proposal is only in kcal
     let mut gram_proposal = Proposal(HashMap::new());
     for (name, n) in &proposal.0 {
-        let ingredient_kcal = *n as f64*(target.kcal as f64/proposal.kcal() as f64);
-        gram_proposal.0.insert(name.to_string(), (ingredient_kcal*(raw_ingredients[name].g as f64/raw_ingredients[name].kcal as f64)).round() as u64);
+        let ingredient_kcal = *n as f64 * (target.kcal as f64 / proposal.kcal() as f64);
+        gram_proposal.0.insert(
+            name.to_string(),
+            (ingredient_kcal
+                * (raw_ingredients.0[name].g as f64 / raw_ingredients.0[name].kcal as f64))
+                .round() as u64,
+        );
     }
     println!("");
     println!("---- RESULT ----");
@@ -251,13 +341,22 @@ fn main() {
     let mut fat = 0.0;
     let mut protein = 0.0;
     for (name, g) in &gram_proposal.0 {
-        let factor = *g as f64 / raw_ingredients[name].g as f64;
-        carb += factor * raw_ingredients[name].carb as f64;
-        fat += factor * raw_ingredients[name].fat as f64;
-        protein += factor * raw_ingredients[name].protein as f64;
+        let factor = *g as f64 / raw_ingredients.0[name].g as f64;
+        carb += factor * raw_ingredients.0[name].carb as f64;
+        fat += factor * raw_ingredients.0[name].fat as f64;
+        protein += factor * raw_ingredients.0[name].protein as f64;
     }
     let sum = carb + fat + protein;
-    println!("Results in {}g carb, {}g fat, {}g protein in {} kcal ({}:{}:{}).", carb.round(), fat.round(), protein.round(), target.kcal, (100.0*carb/sum).round(), (100.0*fat/sum).round(), (100.0*protein/sum).round());
+    println!(
+        "Results in {}g carb, {}g fat, {}g protein in {} kcal ({}:{}:{}).",
+        carb.round(),
+        fat.round(),
+        protein.round(),
+        target.kcal,
+        (100.0 * carb / sum).round(),
+        (100.0 * fat / sum).round(),
+        (100.0 * protein / sum).round()
+    );
 }
 
 #[cfg(test)]
@@ -347,7 +446,7 @@ mod tests {
         };
         assert_eq!(
             t.evaluate(&proposal, &ingredients),
-            0.1*0.1 + 0.2*0.2 + 0.3*0.3
+            0.1 * 0.1 + 0.2 * 0.2 + 0.3 * 0.3
         );
 
         let t = NormalizedTarget {
@@ -369,7 +468,8 @@ mod tests {
             protein: 0.50,
         };
         let ingredients = test_ingredients();
-        let proposal = optimize(&t, &ingredients, 2);
+        let proposal = optimize(&t, TargetConstraints::new(), &ingredients, 2);
+
         let mut expected_proposal = Proposal(HashMap::new());
         expected_proposal.0.insert("apple".to_string(), 2);
         expected_proposal.0.insert("banana".to_string(), 0);
@@ -382,7 +482,7 @@ mod tests {
             protein: 0.4,
         };
         let ingredients = test_ingredients();
-        let proposal = optimize(&t, &ingredients, 2);
+        let proposal = optimize(&t, TargetConstraints::new(), &ingredients, 2);
         let mut expected_proposal = Proposal(HashMap::new());
         expected_proposal.0.insert("apple".to_string(), 0);
         expected_proposal.0.insert("banana".to_string(), 2);
@@ -394,7 +494,7 @@ mod tests {
             protein: 0.45,
         };
         let ingredients = test_ingredients();
-        let proposal = optimize(&t, &ingredients, 2);
+        let proposal = optimize(&t, TargetConstraints::new(), &ingredients, 2);
         let mut expected_proposal = Proposal(HashMap::new());
         expected_proposal.0.insert("apple".to_string(), 1);
         expected_proposal.0.insert("banana".to_string(), 1);
