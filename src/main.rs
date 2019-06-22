@@ -264,7 +264,7 @@ fn optimize(
 }
 
 fn help() {
-    println!("usage: mix target.toml ingredient0.toml ... ingredient10.toml");
+    println!("usage: natural-bodybuilder target.toml ingredient0.toml ... ingredient10.toml");
 }
 
 pub fn read_file(filepath: &str) -> String {
@@ -334,7 +334,7 @@ fn main() {
     }
     println!("");
     println!("---- RESULT ----");
-    println!("Mix {:?}", gram_proposal);
+    println!("Mix the following together (in grams) {:?}", gram_proposal);
 
     // Print macros of result
     let mut carb = 0.0;

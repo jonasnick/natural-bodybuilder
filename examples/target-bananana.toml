@@ -1,0 +1,17 @@
+kcal = 1500
+# in fractions
+carb = 40
+fat = 30
+protein = 30
+
+[[constraint_exact]]
+name = "banana"
+g = 200
+
+[[constraint_at_most]]
+name = "quark40"
+g = 500
+
+[[constraint_at_least]]
+name = "oats"
+g = 75
