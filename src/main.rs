@@ -226,6 +226,9 @@ fn optimize(
     };
     insert_constraints(&constraints.at_least);
     insert_constraints(&constraints.exact);
+    if steps < assigned_pieces as usize {
+        panic!("Constraints do not fit into target kcal");
+    }
     for _ in 0..steps - assigned_pieces as usize {
         let mut min_cost = None;
         let mut best_ingredient = None;
@@ -258,7 +261,7 @@ fn optimize(
             };
             *proposal.0.get_mut(name).unwrap() -= 1;
         }
-        *proposal.0.get_mut(best_ingredient.unwrap()).unwrap() += 1;
+        *proposal.0.get_mut(best_ingredient.expect("No best ingredient selected because constraints can't be fulfilled")).unwrap() += 1;
     }
     proposal
 }
