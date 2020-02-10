@@ -1,7 +1,7 @@
 # natural-bodybuilder
 
-This is just a thing I wrote on a train ride to come up with a recipe for my new blender and avoid having to cook when arriving home.
-Spaghetti code but appears to work.
+~~This is just a thing I wrote on a train ride to come up with a recipe for my new blender and avoid having to cook when arriving home.
+Spaghetti code but appears to work~~ (EDIT: turns out this project wasn't a waste of time. I've been using it a couple of times per week in the last few months and skeptical coworkers seem to enjoy the results).
 Uses simple greedy search.
 
 Usage
